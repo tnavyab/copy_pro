@@ -6,7 +6,7 @@ import contractions
 import emoji
 import torch
 from torch.utils.data import DataLoader, Dataset
-from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification
+from transformers import RobertaTokenizerFast, RobertaForSequenceClassification
 from torch.optim import AdamW
 
 from sklearn.model_selection import train_test_split
@@ -15,7 +15,7 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
 # ------------------------------------------------------------
-# STEP 1: Setup & NLTK downloads
+# STEP 1: Setup
 # ------------------------------------------------------------
 nltk.download('stopwords')
 nltk.download('wordnet')
@@ -25,7 +25,7 @@ nltk.download('omw-1.4')
 # STEP 2: Load your dataset
 # ------------------------------------------------------------
 file_path = r"C:\Users\tnavy\OneDrive\Documents\AI PROJECT\students_feedback_predicted.csv"
-df = pd.read_csv(file_path,encoding='cp1252')
+df = pd.read_csv(file_path, encoding='cp1252')
 
 feedback_columns = [
     "Faculty_Feedback", "Infrastructure_Feedback", "Library_Feedback",
@@ -63,6 +63,7 @@ df["Cleaned_Feedback"] = df["Combined_Feedback"].apply(clean_text)
 # ------------------------------------------------------------
 X = df["Cleaned_Feedback"].tolist()
 y = df["Overall_Sentiment"].astype('category').cat.codes.tolist()
+
 label2id = dict(enumerate(df["Overall_Sentiment"].astype('category').cat.categories))
 id2label = {v: k for k, v in label2id.items()}
 
@@ -74,9 +75,9 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # ------------------------------------------------------------
-# STEP 6: Tokenization using DistilBERT
+# STEP 6: Tokenization (RoBERTa)
 # ------------------------------------------------------------
-tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+tokenizer = RobertaTokenizerFast.from_pretrained("roberta-base")
 
 class FeedbackDataset(Dataset):
     def __init__(self, texts, labels, tokenizer, max_len=96):
@@ -106,19 +107,20 @@ train_loader = DataLoader(train_data, batch_size=4, shuffle=True)
 test_loader = DataLoader(test_data, batch_size=4)
 
 # ------------------------------------------------------------
-# STEP 7: Model setup
+# STEP 7: Model setup (RoBERTa)
 # ------------------------------------------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("✅ Using device:", device)
+print("Using device:", device)
 
-model = DistilBertForSequenceClassification.from_pretrained(
-    "distilbert-base-uncased", num_labels=len(set(y))
+model = RobertaForSequenceClassification.from_pretrained(
+    "roberta-base",
+    num_labels=len(set(y))
 ).to(device)
 
 optimizer = AdamW(model.parameters(), lr=2e-5)
 
 # ------------------------------------------------------------
-# STEP 8: Training loop (1–2 epochs)
+# STEP 8: Training
 # ------------------------------------------------------------
 epochs = 1
 model.train()
@@ -127,15 +129,23 @@ for epoch in range(epochs):
     total_loss = 0
     for batch in train_loader:
         optimizer.zero_grad()
+
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels
+        )
+
         loss = outputs.loss
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
-    print(f"Epoch {epoch+1}/{epochs}, Average Loss: {total_loss/len(train_loader):.4f}")
+
+    print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss/len(train_loader):.4f}")
 
 # ------------------------------------------------------------
 # STEP 9: Evaluation
@@ -148,41 +158,40 @@ with torch.no_grad():
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)
+
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         preds.extend(torch.argmax(outputs.logits, dim=1).cpu().numpy())
         true_labels.extend(labels.cpu().numpy())
 
-print("\n🎯 Accuracy:", round(accuracy_score(true_labels, preds), 3))
-print("\n📊 Classification Report:\n", classification_report(true_labels, preds, target_names=label2id.values()))
+print("\nAccuracy:", round(accuracy_score(true_labels, preds), 3))
+print("\nClassification Report:\n",
+      classification_report(true_labels, preds, target_names=label2id.values()))
 
 # ------------------------------------------------------------
-# STEP 10: Prediction for new feedback
+# STEP 10: Testing new feedback
 # ------------------------------------------------------------
 new_feedback = [
     "Faculty members are very helpful and supportive.",
     "Infrastructure is poor and placements are disappointing.",
-    "College is okay, not too bad overall.",
-    "Labs were clean but some computers were not working properly 😞",
-    "Library facilities are awesome, but Wi-Fi is slow."
+    "College is okay, not too bad overall."
 ]
 
 new_clean = [clean_text(fb) for fb in new_feedback]
+
 enc = tokenizer(new_clean, padding=True, truncation=True, max_length=96, return_tensors="pt").to(device)
 
 with torch.no_grad():
     logits = model(**enc).logits
     pred_labels = torch.argmax(logits, dim=1).cpu().numpy()
 
-print("\n🔍 Sentiment Predictions:")
+print("\nPredictions:")
 for fb, p in zip(new_feedback, pred_labels):
     print(f"'{fb}' → {label2id[p]}")
 
 # ------------------------------------------------------------
-# STEP 11: Save the trained model
+# STEP 11: Save model
 # ------------------------------------------------------------
-# ------------------------------------------------------------
-# SAVE MODEL + TOKENIZER
-# ------------------------------------------------------------
-model.save_pretrained("saved_model")
-tokenizer.save_pretrained("saved_model")
-print("Model & tokenizer saved successfully!")
+model.save_pretrained("saved_roberta_model")
+tokenizer.save_pretrained("saved_roberta_model")
+
+print("RoBERTa model saved successfully!")
